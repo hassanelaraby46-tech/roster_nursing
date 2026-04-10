@@ -1,119 +1,108 @@
-import customtkinter as ctk
+import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from tkinter import messagebox
+import io
+from xlsxwriter.utility import xl_col_to_name
 
-# إعداد مظهر الواجهة
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+# إعدادات الصفحة
+st.set_page_config(page_title="ICU Roster Generator", page_icon="🏥")
 
-class RosterApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
+st.title("🏥 نظام إدارة جداول تمريض العناية المركزة")
+st.subheader("إنشاء جدول شفتات MLLNNOO ذكي")
 
-        self.title("نظام إدارة تمريض العناية المركزة - ICU Roster")
-        self.geometry("450x500")
+# واجهة المدخلات في الشريط الجانبي (Sidebar)
+with st.sidebar:
+    st.header("إعدادات الجدول")
+    year = st.number_input("السنة", min_value=2024, max_value=2030, value=datetime.now().year)
+    month = st.number_input("الشهر", min_value=1, max_value=12, value=datetime.now().month)
+    num_staff = st.slider("عدد طاقم التمريض", min_value=1, max_value=50, value=14)
+    
+    generate_btn = st.button("توليد الجدول الآن")
 
-        # العنوان الرئيسي
-        self.label_title = ctk.CTkLabel(self, text="إنشاء جدول شفتات MLLNNOO", font=("Arial", 20, "bold"))
-        self.label_title.pack(pady=20)
+if generate_btn:
+    try:
+        pattern = ['M', 'L', 'L', 'N', 'N', 'O', 'O']
+        
+        # حساب الأيام
+        start_date = datetime(year, month, 1)
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = datetime(year, month + 1, 1) - timedelta(days=1)
+        
+        days_list = [(start_date + timedelta(days=x)) for x in range((end_date - start_date).days + 1)]
+        day_names = [d.strftime('%a') for d in days_list]
 
-        # مدخل السنة
-        self.label_year = ctk.CTkLabel(self, text="السنة (Year):")
-        self.label_year.pack(pady=5)
-        self.entry_year = ctk.CTkEntry(self, placeholder_text="2024")
-        self.entry_year.insert(0, str(datetime.now().year))
-        self.entry_year.pack(pady=5)
+        # بناء البيانات
+        data = {}
+        for i in range(num_staff):
+            staff_name = f"Nurse {i+1}"
+            data[staff_name] = [pattern[(d + i) % len(pattern)] for d in range(len(days_list))]
 
-        # مدخل الشهر
-        self.label_month = ctk.CTkLabel(self, text="الشهر (1-12):")
-        self.label_month.pack(pady=5)
-        self.entry_month = ctk.CTkEntry(self, placeholder_text="5")
-        self.entry_month.insert(0, str(datetime.now().month))
-        self.entry_month.pack(pady=5)
+        df = pd.DataFrame(data)
+        df.insert(0, 'Day', day_names)
+        df.index = [d.strftime('%d-%m') for d in days_list]
 
-        # مدخل عدد التمريض
-        self.label_staff = ctk.CTkLabel(self, text="عدد طاقم التمريض:")
-        self.label_staff.pack(pady=5)
-        self.entry_staff = ctk.CTkEntry(self, placeholder_text="14")
-        self.entry_staff.insert(0, "14")
-        self.entry_staff.pack(pady=5)
+        # معاينة الجدول في الموقع
+        st.success(f"تم إنشاء الجدول لشهر {month} بنجاح!")
+        st.dataframe(df, height=400)
 
-        # زر الإنشاء
-        self.btn_generate = ctk.CTkButton(self, text="استخراج جدول إكسيل ذكي", command=self.generate_roster_logic)
-        self.btn_generate.pack(pady=30)
+        # تحويل الإكسيل إلى "ذاكرة مؤقتة" لتحميله عبر الويب
+        output = io.BytesIO()
+        writer = pd.ExcelWriter(output, engine='xlsxwriter')
+        df.to_excel(writer, sheet_name='Roster')
+        
+        workbook  = writer.book
+        worksheet = writer.sheets['Roster']
+        
+        # التنسيقات (نفس منطق تطبيق سطح المكتب)
+        header_f = workbook.add_format({'bg_color': '#1A237E', 'font_color': 'white', 'bold': True, 'border': 1, 'align': 'center'})
+        stat_f = workbook.add_format({'bg_color': '#E8EAF6', 'bold': True, 'border': 1, 'align': 'center'})
+        
+        fmt_m = workbook.add_format({'bg_color': '#FFF9C4', 'border': 1, 'align': 'center'})
+        fmt_l = workbook.add_format({'bg_color': '#C8E6C9', 'border': 1, 'align': 'center'})
+        fmt_n = workbook.add_format({'bg_color': '#BBDEFB', 'border': 1, 'align': 'center'})
+        fmt_o = workbook.add_format({'bg_color': '#FFCDD2', 'border': 1, 'align': 'center'})
 
-        # تذييل
-        self.label_footer = ctk.CTkLabel(self, text="بناءً على نمط التوزيع العادل MLLNNOO", font=("Arial", 10))
-        self.label_footer.pack(side="bottom", pady=10)
+        last_row_num = len(days_list) + 1
+        last_col_letter = xl_col_to_name(num_staff + 1)
+        full_range = f"C2:{last_col_letter}{last_row_num}"
 
-    def generate_roster_logic(self):
-        try:
-            year = int(self.entry_year.get())
-            month = int(self.entry_month.get())
-            num_staff = int(self.entry_staff.get())
-            
-            pattern = ['M', 'L', 'L', 'N', 'N', 'O', 'O']
-            
-            # حساب الأيام
-            start_date = datetime(year, month, 1)
-            if month == 12:
-                end_date = datetime(year + 1, 1, 1) - timedelta(days=1)
-            else:
-                end_date = datetime(year, month + 1, 1) - timedelta(days=1)
-            days_list = [(start_date + timedelta(days=x)) for x in range((end_date - start_date).days + 1)]
+        worksheet.conditional_format(full_range, {'type': 'cell', 'criteria': 'equal to', 'value': '"M"', 'format': fmt_m})
+        worksheet.conditional_format(full_range, {'type': 'cell', 'criteria': 'equal to', 'value': '"L"', 'format': fmt_l})
+        worksheet.conditional_format(full_range, {'type': 'cell', 'criteria': 'equal to', 'value': '"N"', 'format': fmt_n})
+        worksheet.conditional_format(full_range, {'type': 'cell', 'criteria': 'equal to', 'value': '"O"', 'format': fmt_o})
 
-            # بناء البيانات
-            data = {}
-            day_names = [d.strftime('%a') for d in days_list]
-            for i in range(num_staff):
-                staff_name = f"Nurse {i+1}"
-                data[staff_name] = [pattern[(d + i) % len(pattern)] for d in range(len(days_list))]
+        # تنسيق العناوين والحسابات
+        for col_num, value in enumerate(df.columns):
+            worksheet.write(0, col_num + 1, value, header_f)
+        worksheet.write(0, 0, 'Date', header_f)
 
-            df = pd.DataFrame(data)
-            df.insert(0, 'Day', day_names)
-            df.index = [d.strftime('%d-%m') for d in days_list]
+        for idx, label in enumerate(['Total Hours', 'L Count', 'N Count', 'M Count']):
+            row = last_row_num + idx
+            worksheet.write(row, 1, label, header_f)
+            for col_num in range(num_staff):
+                col_let = xl_col_to_name(col_num + 2)
+                d_range = f"{col_let}2:{col_let}{last_row_num}"
+                if idx == 0: form = f'=(COUNTIF({d_range},"L")*12)+(COUNTIF({d_range},"N")*12)+(COUNTIF({d_range},"M")*6)'
+                elif idx == 1: form = f'=COUNTIF({d_range},"L")'
+                elif idx == 2: form = f'=COUNTIF({d_range},"N")'
+                else: form = f'=COUNTIF({d_range},"M")'
+                worksheet.write_formula(row, col_num + 2, form, stat_f)
 
-            # تصدير الإكسيل (نفس منطق التنسيق السابق)
-            file_name = f"ICU_Roster_{year}_{month}.xlsx"
-            writer = pd.ExcelWriter(file_name, engine='xlsxwriter')
-            df.to_excel(writer, sheet_name='Roster')
-            
-            workbook  = writer.book
-            worksheet = writer.sheets['Roster']
-            
-            # تنسيقات سريعة
-            header_f = workbook.add_format({'bg_color': '#1A237E', 'font_color': 'white', 'bold': True, 'border': 1, 'align': 'center'})
-            stat_f = workbook.add_format({'bg_color': '#E8EAF6', 'bold': True, 'border': 1, 'align': 'center'})
-            
-            # كتابة العناوين وتنسيق الشفتات (اختصاراً للمساحة استخدمنا التنسيق الشرطي)
-            for col_num, value in enumerate(df.columns):
-                worksheet.write(0, col_num + 1, value, header_f)
-            worksheet.write(0, 0, 'Date', header_f)
+        worksheet.set_column(2, num_staff + 1, 6)
+        worksheet.set_column(0, 1, 10)
+        writer.close()
+        
+        # زر تحميل الملف
+        st.download_button(
+            label="📥 تحميل جدول الإكسيل الملون",
+            data=output.getvalue(),
+            file_name=f"ICU_Roster_{year}_{month}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-            # إضافة صفوف الحسابات أسفل الجدول
-            last_row = len(days_list) + 1
-            calc_labels = ['Total Hours', 'L Count', 'N Count', 'M Count']
-            for idx, label in enumerate(calc_labels):
-                worksheet.write(last_row + idx, 1, label, header_f)
-                for col_num in range(num_staff):
-                    col_letter = chr(67 + col_num)
-                    data_range = f"{col_letter}2:{col_letter}{last_row}"
-                    if idx == 0: formula = f'=(COUNTIF({data_range},"L")*12)+(COUNTIF({data_range},"N")*12)+(COUNTIF({data_range},"M")*6)'
-                    elif idx == 1: formula = f'=COUNTIF({data_range},"L")'
-                    elif idx == 2: formula = f'=COUNTIF({data_range},"N")'
-                    else: formula = f'=COUNTIF({data_range},"M")'
-                    worksheet.write_formula(last_row + idx, col_num + 2, formula, stat_f)
-
-            worksheet.set_column(2, num_staff + 1, 6)
-            worksheet.set_column(0, 1, 10)
-            writer.close()
-
-            messagebox.showinfo("نجاح", f"تم إنشاء الملف بنجاح!\nاسم الملف: {file_name}")
-
-        except Exception as e:
-            messagebox.showerror("خطأ", f"حدث خطأ: {str(e)}")
-
-if __name__ == "__main__":
-    app = RosterApp()
-    app.mainloop()
+    except Exception as e:
+        st.error(f"حدث خطأ: {e}")
+else:
+    st.info("قم بتعديل الخيارات من القائمة الجانبية ثم اضغط على زر التوليد.")
